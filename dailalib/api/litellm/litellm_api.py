@@ -1,4 +1,3 @@
-import typing
 from typing import Optional
 import os
 
@@ -6,10 +5,15 @@ import tiktoken
 
 from ..ai_api import AIAPI
 
+
 class LiteLLMAIAPI(AIAPI):
     prompts_by_name = []
     DEFAULT_MODEL = "gpt-4o"
+    OPENAI_MODELS = {"gpt-4", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "o1-mini", "o1-preview"}
     MODEL_TO_TOKENS = {
+        # TODO: update the token values for o1
+        "o1-mini": 8_000,
+        "o1-preview": 8_000,
         "gpt-4-turbo": 128_000,
         "gpt-4": 8_000,
         "gpt-4o": 8_000,
@@ -25,7 +29,9 @@ class LiteLLMAIAPI(AIAPI):
         api_key: Optional[str] = None,
         model: str = DEFAULT_MODEL,
         prompts: Optional[list] = None,
-        fit_to_tokens: bool = True,
+        fit_to_tokens: bool = False,
+        chat_use_ctx: bool = True,
+        chat_event_callbacks: Optional[dict] = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -34,6 +40,8 @@ class LiteLLMAIAPI(AIAPI):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model
         self.fit_to_tokens = fit_to_tokens
+        self.chat_use_ctx = chat_use_ctx
+        self.chat_event_callbacks = chat_event_callbacks or {"send": None, "receive": None}
 
         # delay prompt import
         from .prompts import PROMPTS, DEFAULT_STYLE
@@ -115,7 +123,7 @@ class LiteLLMAIAPI(AIAPI):
     def api_key(self):
         if not self._api_key:
             return None
-        elif "gpt" in self.model:
+        elif self.model in self.OPENAI_MODELS:
             return os.getenv("OPENAI_API_KEY", None)
         elif "claude" in self.model:
             return os.getenv("ANTHROPIC_API_KEY", None)
@@ -130,7 +138,7 @@ class LiteLLMAIAPI(AIAPI):
     def api_key(self, value):
         self._api_key = value
         if self._api_key:
-            if "gpt" in self.model:
+            if self.model in self.OPENAI_MODELS:
                 os.environ["OPENAI_API_KEY"] = self._api_key
             elif "claude" in self.model:
                 os.environ["ANTHROPIC_API_KEY"] = self._api_key
@@ -147,7 +155,7 @@ class LiteLLMAIAPI(AIAPI):
             api_key = api_key_or_path
         self.api_key = api_key
 
-    def ask_prompt_style(self):
+    def ask_prompt_style(self, *args, **kwargs):
         if self._dec_interface is not None:
             from .prompts import ALL_STYLES
 
@@ -161,11 +169,15 @@ class LiteLLMAIAPI(AIAPI):
                 style_choices,
                 title="DAILA"
             )
-            if p_style != prompt_style and p_style is not None:
+            if p_style != prompt_style and p_style:
+                if p_style not in ALL_STYLES:
+                    self._dec_interface.error(f"Prompt style {p_style} is not supported.")
+                    return
+
                 self.prompt_style = p_style
                 self._dec_interface.info(f"Prompt style set to {p_style}")
 
-    def ask_model(self):
+    def ask_model(self, *args, **kwargs):
         if self._dec_interface is not None:
             model_choices = list(LiteLLMAIAPI.MODEL_TO_TOKENS.keys())
             model_choices.remove(self.model)
